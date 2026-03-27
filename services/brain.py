@@ -22,7 +22,8 @@ client = AsyncOpenAI(
     }
 )
 
-MODEL = "minimax/minimax-m2.5"
+MODEL = os.getenv("OPENROUTER_MODEL", "minimax/minimax-m2.5")
+MAX_COMPLETION_TOKENS = int(os.getenv("OPENROUTER_MAX_TOKENS", "512"))
 
 # Initialize Supabase client
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -517,7 +518,8 @@ async def process_query(text: str, message_history: list) -> str:
             model=MODEL,
             messages=messages,
             tools=tools,
-            tool_choice="auto"
+            tool_choice="auto",
+            max_tokens=MAX_COMPLETION_TOKENS,
         )
     except Exception as e:
         print(f"Error calling MiniMax API: {e}")
@@ -601,7 +603,8 @@ async def process_query(text: str, message_history: list) -> str:
         try:
             final_response = await client.chat.completions.create(
                 model=MODEL,
-                messages=final_messages
+                messages=final_messages,
+                max_tokens=MAX_COMPLETION_TOKENS,
             )
             assistant_text = final_response.choices[0].message.content
         except Exception as e:
