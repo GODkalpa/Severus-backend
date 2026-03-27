@@ -135,7 +135,8 @@ async def log_expense(amount: float, category: str, description: str) -> str:
         data = {
             "amount": amount,
             "category": category,
-            "description": description
+            "description": description,
+            "logged_at": datetime.utcnow().isoformat()
         }
         response = supabase.table("financial_ledger").insert(data).execute()
         return f"Successfully logged an expense of {amount} for {description} under {category}."
@@ -283,7 +284,8 @@ async def log_biometric(metric_type: str, value: float, unit: str = '', notes: s
             "metric_type": metric_type,
             "value": value,
             "unit": unit,
-            "notes": notes
+            "notes": notes,
+            "logged_at": datetime.utcnow().isoformat()
         }
         response = supabase.table("biometrics").insert(data).execute()
         return f"Successfully logged {value} {unit} for {metric_type}."
