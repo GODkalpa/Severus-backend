@@ -1,11 +1,14 @@
 import os
 import asyncio
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from datetime import datetime
+from urllib.parse import urlparse
+
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 from services.stt import RealTimeSTT
-from services.brain import process_query
+from services.brain import process_query, supabase
 from services.tts import generate_tts
 
 load_dotenv(".env.local")
@@ -13,11 +16,58 @@ load_dotenv()
 
 app = FastAPI(title="Severus Voice AI Backend")
 
+
+def parse_allowed_origins() -> list[str]:
+    raw_origins = os.getenv("CORS_ALLOWED_ORIGINS", "")
+    origins = [get_http_origin(origin.strip()) for origin in raw_origins.split(",") if origin.strip()]
+    return origins or ["*"]
+
+
+def get_http_origin(value: str) -> str:
+    parsed = urlparse(value)
+    if parsed.scheme and parsed.netloc:
+        return f"{parsed.scheme}://{parsed.netloc}"
+    return value.rstrip("/")
+
+
+def build_dashboard_snapshot() -> dict[str, list[dict]]:
+    if not supabase:
+        raise RuntimeError("Supabase client is not configured.")
+
+    today = datetime.utcnow().date().isoformat()
+
+    biometrics = (
+        supabase.table("biometrics")
+        .select("*")
+        .gte("logged_at", today)
+        .order("logged_at", desc=True)
+        .execute()
+    )
+    action_items = (
+        supabase.table("action_items")
+        .select("*")
+        .order("created_at", desc=True)
+        .execute()
+    )
+    financial_ledger = (
+        supabase.table("financial_ledger")
+        .select("*")
+        .gte("logged_at", today)
+        .order("logged_at", desc=True)
+        .execute()
+    )
+
+    return {
+        "biometrics": biometrics.data or [],
+        "action_items": action_items.data or [],
+        "financial_ledger": financial_ledger.data or [],
+    }
+
 # CORS Middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Adjust in production
-    allow_credentials=True,
+    allow_origins=parse_allowed_origins(),
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -25,6 +75,16 @@ app.add_middleware(
 @app.get("/")
 async def root():
     return {"message": "Severus Voice AI Backend is running"}
+
+
+@app.get("/api/dashboard")
+async def dashboard():
+    try:
+        return await asyncio.to_thread(build_dashboard_snapshot)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Failed to load dashboard data.") from exc
 
 @app.websocket("/ws/severus")
 async def websocket_endpoint(websocket: WebSocket):
