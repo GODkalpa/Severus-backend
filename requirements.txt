@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+websockets
+assemblyai
+edge-tts
+python-dotenv
+aiohttp
+openai
+requests
+supabase
