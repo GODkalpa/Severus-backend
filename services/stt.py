@@ -37,6 +37,7 @@ class RealTimeSTT:
         self.client.on(StreamingEvents.Termination, self._on_close)
         
         self.on_transcript_callback = on_transcript
+        self.last_processed_turn_order: Optional[int] = None
         try:
             self.loop = loop or asyncio.get_running_loop()
         except RuntimeError:
@@ -46,12 +47,20 @@ class RealTimeSTT:
         print(f"AssemblyAI Session started: {event.id}")
 
     def _on_turn(self, client: StreamingClient, event: TurnEvent):
-        if not event.transcript:
+        transcript = event.transcript.strip()
+        if not transcript:
             return
 
-        print(f"Transcript received: {event.transcript}")
+        if not event.end_of_turn:
+            return
+
+        if event.turn_order == self.last_processed_turn_order:
+            return
+
+        self.last_processed_turn_order = event.turn_order
+        print(f"Final transcript received: {transcript}")
         asyncio.run_coroutine_threadsafe(
-            self.on_transcript_callback(event.transcript), 
+            self.on_transcript_callback(transcript),
             self.loop
         )
 
