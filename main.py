@@ -11,6 +11,14 @@ from dotenv import load_dotenv
 from services.stt import RealTimeSTT
 from services.brain import process_query_stream, supabase, clean_spoken_text
 from services.tts import generate_tts_stream
+from services.auth_service import (
+    generate_registration_options, 
+    verify_registration, 
+    generate_authentication_options, 
+    verify_authentication,
+    validate_session
+)
+from services.push_service import save_subscription
 
 load_dotenv(".env.local")
 load_dotenv()
@@ -77,9 +85,58 @@ app.add_middleware(
 async def root():
     return {"message": "Severus Voice AI Backend is running"}
 
+# --- AUTH ROUTES ---
+
+@app.get("/api/auth/register/begin")
+async def register_begin(user_id: str, master_secret: str = None):
+    try:
+        return await generate_registration_options(user_id, master_secret)
+    except Exception as e:
+        if str(e) == "MASTER_SECRET_REQUIRED":
+            raise HTTPException(status_code=401, detail="MASTER_SECRET_REQUIRED")
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/auth/register/complete")
+async def register_complete(challenge_id: str, response: dict):
+    try:
+        return await verify_registration(challenge_id, response)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/api/auth/login/begin")
+async def login_begin():
+    try:
+        return await generate_authentication_options()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/auth/login/complete")
+async def login_complete(challenge_id: str, response: dict):
+    try:
+        return await verify_authentication(challenge_id, response)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+# --- PROTECTED ROUTES ---
+
+@app.post("/api/push/subscribe")
+async def subscribe_push(subscription: dict, token: str = None):
+    """
+    Registers a new device subscription for 24/7 background alerts.
+    """
+    if not await validate_session(token):
+        raise HTTPException(status_code=401, detail="UNAUTHORIZED")
+    
+    result = await save_subscription(subscription)
+    if result:
+        return {"status": "success", "message": "REVELIO_UPLINK_ESTABLISHED"}
+    else:
+        raise HTTPException(status_code=500, detail="VAULT_WRITE_ERROR")
 
 @app.get("/api/dashboard")
-async def dashboard():
+async def dashboard(token: str = None):
+    if not await validate_session(token):
+        raise HTTPException(status_code=401, detail="UNAUTHORIZED")
     try:
         return await asyncio.to_thread(build_dashboard_snapshot)
     except RuntimeError as exc:
@@ -90,8 +147,21 @@ async def dashboard():
 @app.websocket("/ws/severus")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    print("Client connected to /ws/severus")
+    
+    # 0. Wait for authentication token
+    try:
+        auth_msg = await websocket.receive_text()
+        auth_data = json.loads(auth_msg)
+        if auth_data.get("type") != "AUTH" or not await validate_session(auth_data.get("token")):
+            await websocket.send_text(json.dumps({"type": "ERROR", "message": "UNAUTHORIZED"}))
+            await websocket.close()
+            return
+    except Exception:
+        await websocket.close()
+        return
 
+    print("Client authenticated for /ws/severus")
+    
     # Maintain message history for the duration of the session
     message_history = []
 

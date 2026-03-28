@@ -8,3 +8,5 @@ aiohttp
 openai
 requests
 supabase
+fido2
+cryptography
