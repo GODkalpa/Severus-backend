@@ -5,7 +5,6 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from fido2.server import Fido2Server
 from fido2.webauthn import (
-    AuthenticatorSelectionCriteria,
     UserVerificationRequirement,
     AuthenticatorAttachment,
 )
@@ -44,17 +43,15 @@ async def generate_registration_options(user_id: str, master_secret: str = None)
     options, state = server.register_begin(
         user,
         credentials,
-        authenticator_selection=AuthenticatorSelectionCriteria(
-            authenticator_attachment=AuthenticatorAttachment.PLATFORM,
-            user_verification=UserVerificationRequirement.REQUIRED,
-        ),
+        authenticator_attachment=AuthenticatorAttachment.PLATFORM,
+        user_verification=UserVerificationRequirement.REQUIRED,
     )
     
     challenge_id = str(uuid.uuid4())
     challenges[challenge_id] = state
     
     # Serialize for frontend
-    return {"options": json.loads(json.dumps(options)), "challengeId": challenge_id}
+    return {"options": options, "challengeId": challenge_id}
 
 async def verify_registration(challenge_id: str, challenge_response: dict):
     state = challenges.pop(challenge_id, None)
@@ -88,7 +85,7 @@ async def generate_authentication_options():
     challenge_id = str(uuid.uuid4())
     challenges[challenge_id] = state
     
-    return {"options": json.loads(json.dumps(options)), "challengeId": challenge_id}
+    return {"options": options, "challengeId": challenge_id}
 
 async def verify_authentication(challenge_id: str, auth_response: dict):
     state = challenges.pop(challenge_id, None)
