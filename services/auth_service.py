@@ -96,7 +96,7 @@ async def generate_registration_options(user_id: str | None = None, master_secre
         credentials,
         authenticator_attachment=AuthenticatorAttachment.PLATFORM,
         user_verification=UserVerificationRequirement.REQUIRED,
-        resident_key=ResidentKeyRequirement.PREFERRED,
+        resident_key_requirement=ResidentKeyRequirement.PREFERRED,
     )
     
     challenge_id = str(uuid.uuid4())
