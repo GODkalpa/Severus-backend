@@ -68,8 +68,11 @@ async def generate_registration_options(user_id: str, master_secret: str = None)
     challenge_id = str(uuid.uuid4())
     challenges[challenge_id] = state
     
-    # Serialize for frontend
-    return {"options": fido2_options_to_dict(options), "challengeId": challenge_id}
+    # Serialize for frontend - HUD expects options.publicKey
+    return {
+        "options": {"publicKey": fido2_options_to_dict(options)}, 
+        "challengeId": challenge_id
+    }
 
 async def verify_registration(challenge_id: str, challenge_response: dict):
     state = challenges.pop(challenge_id, None)
@@ -103,7 +106,10 @@ async def generate_authentication_options():
     challenge_id = str(uuid.uuid4())
     challenges[challenge_id] = state
     
-    return {"options": fido2_options_to_dict(options), "challengeId": challenge_id}
+    return {
+        "options": {"publicKey": fido2_options_to_dict(options)}, 
+        "challengeId": challenge_id
+    }
 
 async def verify_authentication(challenge_id: str, auth_response: dict):
     state = challenges.pop(challenge_id, None)
