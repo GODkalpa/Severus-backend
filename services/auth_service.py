@@ -74,7 +74,7 @@ async def generate_registration_options(user_id: str, master_secret: str = None)
     
     # Serialize for frontend - HUD expects options.publicKey
     return {
-        "options": {"publicKey": fido2_options_to_dict(options)}, 
+        "options": fido2_options_to_dict(options),
         "challengeId": challenge_id
     }
 
@@ -111,7 +111,7 @@ async def generate_authentication_options():
     challenges[challenge_id] = state
     
     return {
-        "options": {"publicKey": fido2_options_to_dict(options)}, 
+        "options": fido2_options_to_dict(options),
         "challengeId": challenge_id
     }
 
