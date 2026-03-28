@@ -1,0 +1,4 @@
+Table: action_items | Result: SQL Execution Error: column "user_id" does not exist
+Table: biometrics | Result: SQL Execution Error: column "user_id" does not exist
+Table: core_memory | Result: SQL Execution Error: column "user_id" does not exist
+Table: financial_ledger | Result: SQL Execution Error: column "user_id" does not exist

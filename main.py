@@ -1,6 +1,7 @@
 import os
 import asyncio
-from datetime import datetime
+import re
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -8,8 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 from services.stt import RealTimeSTT
-from services.brain import process_query, supabase
-from services.tts import generate_tts
+from services.brain import process_query_stream, supabase, clean_spoken_text
+from services.tts import generate_tts_stream
 
 load_dotenv(".env.local")
 load_dotenv()
@@ -34,7 +35,7 @@ def build_dashboard_snapshot() -> dict[str, list[dict]]:
     if not supabase:
         raise RuntimeError("Supabase client is not configured.")
 
-    today = datetime.utcnow().date().isoformat()
+    today = datetime.now(timezone.utc).date().isoformat()
 
     biometrics = (
         supabase.table("biometrics")
@@ -94,29 +95,84 @@ async def websocket_endpoint(websocket: WebSocket):
     # Maintain message history for the duration of the session
     message_history = []
 
+    # 1. Send initial system metrics
+    from services.brain import MODEL
+    import json
+    await websocket.send_text(json.dumps({
+        "type": "SYSMETRICS",
+        "model": MODEL,
+        "frequency": 74.2, # Base frequency
+        "status": "connected"
+    }))
+
+    async def handle_partial_transcript(partial_text: str):
+        """
+        Callback for partial (ghost) transcripts.
+        """
+        await websocket.send_text(f"PARTIAL:{partial_text}")
+
     async def handle_transcript(transcript_text: str):
         """
         Callback called when a final transcript is received from STT.
+        Streams sentence-by-sentence LLM responses and TTS.
         """
         print(f"Processing transcript: {transcript_text}")
+        await websocket.send_text("THINKING")
+        await websocket.send_text(f"TRANSCRIPT:{transcript_text}")
         
-        # 1. Query the Brain with message history
-        brain_response = await process_query(transcript_text, message_history)
-        print(f"Brain response: {brain_response}")
-        
-        # 2. Generate TTS
+        async def stream_sentence_audio(sentence: str):
+            print(f"Aggregating TTS for sentence: {sentence}")
+            try:
+                # Accumulate all chunks for a single sentence to avoid choppiness in the frontend
+                full_audio = b""
+                async for audio_chunk in generate_tts_stream(sentence):
+                    full_audio += audio_chunk
+                
+                if full_audio:
+                    await websocket.send_bytes(full_audio)
+                    print(f"Sent full audio blob for sentence ({len(full_audio)} bytes)")
+            except Exception as e:
+                print(f"Error in TTS generation: {e}")
+
+        # Accumulate chunks and split by sentences
+        sentence_buffer = ""
         try:
-            audio_response = await generate_tts(brain_response)
+            async for chunk in process_query_stream(transcript_text, message_history):
+                sentence_buffer += chunk
+                
+                # Check for sentence endpoints (simple regex for . ! ? or newline)
+                # Matches punctuation followed by whitespace or end of string
+                parts = re.split(r'(?<=[.!?])\s+|\n', sentence_buffer)
+                
+                if len(parts) > 1:
+                    # All parts except the last one are guaranteed to be complete
+                    for sentence in parts[:-1]:
+                        s_cleaned = clean_spoken_text(sentence)
+                        if s_cleaned:
+                            await stream_sentence_audio(s_cleaned)
+                    sentence_buffer = parts[-1]
             
-            # 3. Stream binary audio back to client
-            await websocket.send_bytes(audio_response)
-            print("Audio response sent to client")
+            # Final portion of the response
+            s_final = clean_spoken_text(sentence_buffer)
+            if s_final:
+                await stream_sentence_audio(s_final)
+            
+            # Signal the client that the current response sequence is complete
+            # This helps the frontend know when to resume recording
+            await websocket.send_text("EOS") # End Of Stream signal
+            print("Response sequence completed (EOS sent)")
+            
         except Exception as e:
-            print(f"Error in TTS or WebSocket send: {e}")
+            print(f"Error in handle_transcript: {e}")
+            await websocket.send_text("EOS")
 
     # Initialize STT with the callback and current event loop
     loop = asyncio.get_running_loop()
-    stt_handler = RealTimeSTT(on_transcript=handle_transcript, loop=loop)
+    stt_handler = RealTimeSTT(
+        on_transcript=handle_transcript, 
+        on_partial=handle_partial_transcript,
+        loop=loop
+    )
     
     try:
         # Start the connection to AssemblyAI in a separate thread to avoid blocking the loop

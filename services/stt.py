@@ -22,7 +22,12 @@ load_dotenv()
 aai.settings.api_key = os.getenv("ASSEMBLYAI_API_KEY")
 
 class RealTimeSTT:
-    def __init__(self, on_transcript: Callable[[str], Coroutine[Any, Any, None]], loop: Optional[asyncio.AbstractEventLoop] = None):
+    def __init__(
+        self, 
+        on_transcript: Callable[[str], Coroutine[Any, Any, None]], 
+        on_partial: Optional[Callable[[str], Coroutine[Any, Any, None]]] = None,
+        loop: Optional[asyncio.AbstractEventLoop] = None
+    ):
         # Configure the Streaming Client (v3)
         self.client = StreamingClient(
             StreamingClientOptions(
@@ -37,6 +42,7 @@ class RealTimeSTT:
         self.client.on(StreamingEvents.Termination, self._on_close)
         
         self.on_transcript_callback = on_transcript
+        self.on_partial_callback = on_partial
         self.last_processed_turn_order: Optional[int] = None
         try:
             self.loop = loop or asyncio.get_running_loop()
@@ -51,7 +57,13 @@ class RealTimeSTT:
         if not transcript:
             return
 
+        # If it's a partial transcript (not end of turn), send it to the partial callback
         if not event.end_of_turn:
+            if self.on_partial_callback:
+                asyncio.run_coroutine_threadsafe(
+                    self.on_partial_callback(transcript),
+                    self.loop
+                )
             return
 
         if event.turn_order == self.last_processed_turn_order:
@@ -77,7 +89,7 @@ class RealTimeSTT:
                 speech_model=SpeechModel.universal_streaming_english,
                 sample_rate=16_000,
                 encoding=Encoding.pcm_s16le,
-                min_end_of_turn_silence_when_confident=700,
+                min_turn_silence=700,
             )
         )
 
