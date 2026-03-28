@@ -4,6 +4,7 @@ import json
 import html
 import asyncio
 import requests
+import aiohttp
 import urllib.parse
 from openai import AsyncOpenAI
 from supabase import create_client, Client
@@ -275,26 +276,32 @@ def _extract_duckduckgo_results(raw_html: str, max_results: int) -> list[dict]:
     return results
 
 
-def _fetch_page_excerpt(url: str, char_limit: int = 1800) -> str:
+async def _fetch_page_excerpt(url: str, char_limit: int = 1800) -> str:
+    """
+    Asynchronously fetches a page excerpt with a strict timeout.
+    """
+    timeout = aiohttp.ClientTimeout(total=4.0, connect=2.0)
     try:
-        response = requests.get(
-            url,
-            headers={"User-Agent": WEB_USER_AGENT},
-            timeout=SEARCH_TIMEOUT_SECONDS,
-        )
-        response.raise_for_status()
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            headers = {"User-Agent": WEB_USER_AGENT}
+            async with session.get(url, headers=headers, ssl=False) as response:
+                if response.status != 200:
+                    return f"Unable to read page: Status {response.status}"
+                
+                content_type = (response.headers.get("content-type") or "").lower()
+                if "html" not in content_type and "text" not in content_type:
+                    return f"Skipped non-HTML ({content_type or 'unknown'})."
+                
+                html_text = await response.text()
+                text = _strip_html_tags(html_text)
+                if not text:
+                    return "Page loaded, but no readable text extracted."
+                
+                return _clip_text(text, char_limit)
+    except asyncio.TimeoutError:
+        return "Connection timed out (3.5s cap)."
     except Exception as exc:
-        return f"Unable to read this page directly: {exc}"
-
-    content_type = (response.headers.get("content-type") or "").lower()
-    if "html" not in content_type and "text" not in content_type:
-        return f"Skipped non-HTML content from {url} ({content_type or 'unknown content type'})."
-
-    text = _strip_html_tags(response.text)
-    if not text:
-        return "The page loaded, but no readable text could be extracted."
-
-    return _clip_text(text, char_limit)
+        return f"Fetch error: {str(exc)}"
 
 
 async def _search_with_tavily(query: str, max_results: int) -> list[dict]:
@@ -416,7 +423,7 @@ async def search_the_web(query: str, max_results: int = 5) -> str:
         return f"I couldn't find any strong web results for '{normalized_query}'."
 
     excerpts = await asyncio.gather(
-        *[asyncio.to_thread(_fetch_page_excerpt, result["url"]) for result in results],
+        *[_fetch_page_excerpt(result["url"]) for result in results],
         return_exceptions=True,
     )
 
@@ -1257,7 +1264,6 @@ async def process_query_stream(text: str, message_history: list):
 
     # 4. Handle Tool Calling if requested
     if tool_calls_data:
-        # Convert collected data to message history format
         # First, add the assistant message with tool calls to history
         assistant_tool_message = {
             "role": "assistant",
@@ -1272,21 +1278,19 @@ async def process_query_stream(text: str, message_history: list):
         }
         message_history.append(assistant_tool_message)
         
-        for tc in tool_calls_data.values():
+        async def execute_single_tool(tc):
             function_name = tc["name"]
             try:
                 function_args = json.loads(tc["arguments"]) if tc["arguments"] else {}
             except Exception:
                 function_args = {}
             
-            # Execute the local function
             try:
                 if function_name == "log_calories":
                     if "calories" in function_args:
                         try:
                             function_args["calories"] = int(function_args["calories"])
-                        except (ValueError, TypeError):
-                            pass
+                        except (ValueError, TypeError): pass
                     tool_result = await log_calories(**function_args)
                 elif function_name == "fetch_weather":
                     tool_result = await fetch_weather(**function_args)
@@ -1294,8 +1298,7 @@ async def process_query_stream(text: str, message_history: list):
                     if "max_results" in function_args:
                         try:
                             function_args["max_results"] = int(function_args["max_results"])
-                        except (ValueError, TypeError):
-                            pass
+                        except (ValueError, TypeError): pass
                     tool_result = await search_the_web(**function_args)
                 elif function_name == "store_core_memory":
                     tool_result = await store_core_memory(**function_args)
@@ -1303,15 +1306,13 @@ async def process_query_stream(text: str, message_history: list):
                     if "amount" in function_args:
                         try:
                             function_args["amount"] = float(function_args["amount"])
-                        except (ValueError, TypeError):
-                            pass
+                        except (ValueError, TypeError): pass
                     tool_result = await log_expense(**function_args)
                 elif function_name == "get_expense_summary":
                     if "days_back" in function_args:
                         try:
                             function_args["days_back"] = int(function_args["days_back"])
-                        except (ValueError, TypeError):
-                            pass
+                        except (ValueError, TypeError): pass
                     tool_result = await get_expense_summary(**function_args)
                 elif function_name == "search_core_memory":
                     tool_result = await search_core_memory(**function_args)
@@ -1325,8 +1326,7 @@ async def process_query_stream(text: str, message_history: list):
                     if "value" in function_args:
                         try:
                             function_args["value"] = float(function_args["value"])
-                        except (ValueError, TypeError):
-                            pass
+                        except (ValueError, TypeError): pass
                     tool_result = await log_biometric(**function_args)
                 elif function_name == "get_daily_biometrics":
                     tool_result = await get_daily_biometrics()
@@ -1340,13 +1340,11 @@ async def process_query_stream(text: str, message_history: list):
                     if "minutes" in function_args:
                         try:
                             function_args["minutes"] = int(function_args["minutes"])
-                        except (ValueError, TypeError):
-                            pass
+                        except (ValueError, TypeError): pass
                     if "seconds" in function_args:
                         try:
                             function_args["seconds"] = int(function_args["seconds"])
-                        except (ValueError, TypeError):
-                            pass
+                        except (ValueError, TypeError): pass
                     tool_result = await start_timer(**function_args)
                 elif function_name == "list_reminders":
                     tool_result = await list_reminders()
@@ -1356,13 +1354,19 @@ async def process_query_stream(text: str, message_history: list):
                 print(f"Error executing tool {function_name}: {e}")
                 tool_result = f"Sir, I encountered a critical error while executing the {function_name} tool."
             
-            # Append tool result to history
-            message_history.append({
+            return {
                 "role": "tool",
                 "tool_call_id": tc["id"],
                 "name": function_name,
-                "content": tool_result
-            })
+                "content": str(tool_result)
+            }
+
+        # Run all tool calls in parallel
+        tool_results = await asyncio.gather(*[execute_single_tool(tc) for tc in tool_calls_data.values()])
+        
+        # Append all results to history
+        for res in tool_results:
+            message_history.append(res)
         
         # 5. Call API a second time to get final conversational response
         final_messages = [{"role": "system", "content": dynamic_prompt}] + message_history

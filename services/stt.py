@@ -89,7 +89,7 @@ class RealTimeSTT:
                 speech_model=SpeechModel.universal_streaming_english,
                 sample_rate=16_000,
                 encoding=Encoding.pcm_s16le,
-                min_turn_silence=700,
+                min_turn_silence=350,
             )
         )
 

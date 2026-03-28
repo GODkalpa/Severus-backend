@@ -60,37 +60,30 @@ def get_http_origin(value: str) -> str:
     return value.rstrip("/")
 
 
-def build_dashboard_snapshot() -> dict[str, list[dict]]:
+async def build_dashboard_snapshot() -> dict[str, list[dict]]:
     if not supabase:
         raise RuntimeError("Supabase client is not configured.")
 
     today = datetime.now(timezone.utc).date().isoformat()
 
-    biometrics = (
-        supabase.table("biometrics")
-        .select("*")
-        .gte("logged_at", today)
-        .order("logged_at", desc=True)
-        .execute()
+    # Define tasks for parallel execution
+    biometric_task = asyncio.to_thread(
+        lambda: supabase.table("biometrics").select("*").gte("logged_at", today).order("logged_at", desc=True).execute()
     )
-    action_items = (
-        supabase.table("action_items")
-        .select("*")
-        .order("created_at", desc=True)
-        .execute()
+    action_task = asyncio.to_thread(
+        lambda: supabase.table("action_items").select("*").order("created_at", desc=True).execute()
     )
-    financial_ledger = (
-        supabase.table("financial_ledger")
-        .select("*")
-        .gte("logged_at", today)
-        .order("logged_at", desc=True)
-        .execute()
+    financial_task = asyncio.to_thread(
+        lambda: supabase.table("financial_ledger").select("*").gte("logged_at", today).order("logged_at", desc=True).execute()
     )
 
+    # Run in parallel
+    results = await asyncio.gather(biometric_task, action_task, financial_task)
+
     return {
-        "biometrics": biometrics.data or [],
-        "action_items": action_items.data or [],
-        "financial_ledger": financial_ledger.data or [],
+        "biometrics": results[0].data or [],
+        "action_items": results[1].data or [],
+        "financial_ledger": results[2].data or [],
     }
 
 # CORS Middleware
@@ -172,7 +165,7 @@ async def dashboard(token: str = None):
     if not await validate_session(token):
         raise HTTPException(status_code=401, detail="UNAUTHORIZED")
     try:
-        return await asyncio.to_thread(build_dashboard_snapshot)
+        return await build_dashboard_snapshot()
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
@@ -235,14 +228,10 @@ async def websocket_endpoint(websocket: WebSocket):
         async def stream_sentence_audio(sentence: str):
             print(f"Aggregating TTS for sentence: {sentence}")
             try:
-                # Accumulate all chunks for a single sentence to avoid choppiness in the frontend
-                full_audio = b""
                 async for audio_chunk in generate_tts_stream(sentence):
-                    full_audio += audio_chunk
+                    await websocket.send_bytes(audio_chunk)
                 
-                if full_audio:
-                    await websocket.send_bytes(full_audio)
-                    print(f"Sent full audio blob for sentence ({len(full_audio)} bytes)")
+                print(f"Sent streaming audio chunks for sentence.")
             except Exception as e:
                 print(f"Error in TTS generation: {e}")
 
