@@ -18,7 +18,7 @@ RP_NAME = "SEVERUS_HUD"
 ORIGIN = os.getenv("WEBAUTHN_ORIGIN", "http://localhost:3000")
 
 RP = PublicKeyCredentialRpEntity(id=RP_ID, name=RP_NAME)
-server = Fido2Server(RP, origin=ORIGIN)
+server = Fido2Server(RP)
 
 # In-memory challenge store (Session based or DB based)
 # For simplicity, we'll store challenges in a small global dict for now, 
@@ -120,16 +120,24 @@ async def verify_authentication(challenge_id: str, auth_response: dict):
     # This is a bit complex with manual storage, usually you use a CredentialSource
     # but we can verify manually or use a helper.
     
-    # For now, we'll assume the client sent a valid signature and we verify it
-    # server.authenticate_complete requires a list of allowed credentials
-    # but we'll just reconstruct the CredentialSource
+    # Verify the signature using the registered credential
     from fido2.webauthn import AttestedCredentialData
     
-    # Verify the signature
-    # (Implementation details omitted for brevity, using Fido2Server helpers is cleaner)
-    # We'll re-run authenticate_complete with the specific credential
+    credential = AttestedCredentialData(websafe_decode(db_cred.data["public_key"]))
+    # (AttestedCredentialData expects a public key, we use the stored one)
+    # Actually, authenticate_complete in 2.x is simpler if we have the CredentialSource
+    # We'll use the low-level verification if authenticate_complete is tricky without a full CredentialSource
     
-    # This is where we create a session token
+    auth_data = server.authenticate_complete(
+        state,
+        [credential],
+        auth_response
+    )
+    
+    # Store the sign count update
+    supabase.table("auth_credentials").update({"sign_count": auth_data.counter}).eq("credential_id", cred_id_encoded).execute()
+
+    # Create session
     session_token = base64.b64encode(os.urandom(32)).decode()
     expires_at = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
     
