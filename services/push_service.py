@@ -26,8 +26,11 @@ def send_push_notification(subscription_info: Dict[str, Any], message: str, titl
         "body": message,
         "icon": "/icons/icon-192x192.png",
         "badge": "/icons/icon-192x192.png",
+        "vibrate": [200, 100, 200],
+        "silent": False,
         "data": {
-            "url": "/"
+            "url": "/",
+            "arrival_time": datetime.now(timezone.utc).isoformat()
         }
     }
 

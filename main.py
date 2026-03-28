@@ -33,6 +33,8 @@ async def lifespan(app: FastAPI):
     Handle application lifecycle events.
     """
     print("🚀 [REVELIO] Launching 24/7 Context Engine...")
+    with open("worker.log", "a", encoding="utf-8") as f:
+        f.write(f"\n--- Started at {datetime.now()} ---\n")
     task = asyncio.create_task(run_context_engine())
     yield
     # Shutdown logic
