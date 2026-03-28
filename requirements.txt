@@ -10,3 +10,4 @@ requests
 supabase
 fido2
 cryptography
+pywebpush

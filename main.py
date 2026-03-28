@@ -19,6 +19,8 @@ from services.auth_service import (
     validate_session
 )
 from services.push_service import save_subscription
+from worker import run_context_engine
+import json
 
 load_dotenv(".env.local")
 load_dotenv()
@@ -80,6 +82,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.on_event("startup")
+async def startup_event():
+    """
+    Launch the 24/7 Context Engine (reminders) as a background task
+    when the server starts up.
+    """
+    print("🚀 [REVELIO] Launching 24/7 Context Engine...")
+    asyncio.create_task(run_context_engine())
 
 @app.get("/")
 async def root():
@@ -167,7 +178,6 @@ async def websocket_endpoint(websocket: WebSocket):
 
     # 1. Send initial system metrics
     from services.brain import MODEL
-    import json
     await websocket.send_text(json.dumps({
         "type": "SYSMETRICS",
         "model": MODEL,
