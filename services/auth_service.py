@@ -7,6 +7,7 @@ from fido2.server import Fido2Server
 from fido2.webauthn import (
     UserVerificationRequirement,
     AuthenticatorAttachment,
+    PublicKeyCredentialRpEntity,
 )
 from fido2.utils import websafe_decode, websafe_encode
 from services.brain import supabase
@@ -16,12 +17,29 @@ RP_ID = os.getenv("WEBAUTHN_RP_ID", "localhost")
 RP_NAME = "SEVERUS_HUD"
 ORIGIN = os.getenv("WEBAUTHN_ORIGIN", "http://localhost:3000")
 
-server = Fido2Server({"id": RP_ID, "name": RP_NAME}, ORIGIN)
+RP = PublicKeyCredentialRpEntity(id=RP_ID, name=RP_NAME)
+server = Fido2Server(RP, origin=ORIGIN)
 
 # In-memory challenge store (Session based or DB based)
 # For simplicity, we'll store challenges in a small global dict for now, 
 # but in production, this should be in Redis or DB with an expiry.
 challenges = {}
+
+def fido2_options_to_dict(options):
+    """
+    Recursively converts FIDO2 options objects to JSON-serializable dicts.
+    Handles bytes by encoding to websafe_base64.
+    """
+    if hasattr(options, "to_dict"):
+        return options.to_dict()
+    
+    # Fallback to manual dictionary construction if needed
+    # (In fido2 2.1.1+, options are typically Mapping-like or have to_dict)
+    try:
+        return json.loads(json.dumps(options))
+    except (TypeError, ValueError):
+        # Handle cases where direct serialization fails
+        return json.loads(json.dumps(options, default=lambda x: websafe_encode(x) if isinstance(x, bytes) else str(x)))
 
 def get_master_secret():
     return os.getenv("SEVERUS_MASTER_SECRET")
@@ -51,7 +69,7 @@ async def generate_registration_options(user_id: str, master_secret: str = None)
     challenges[challenge_id] = state
     
     # Serialize for frontend
-    return {"options": options, "challengeId": challenge_id}
+    return {"options": fido2_options_to_dict(options), "challengeId": challenge_id}
 
 async def verify_registration(challenge_id: str, challenge_response: dict):
     state = challenges.pop(challenge_id, None)
@@ -85,7 +103,7 @@ async def generate_authentication_options():
     challenge_id = str(uuid.uuid4())
     challenges[challenge_id] = state
     
-    return {"options": options, "challengeId": challenge_id}
+    return {"options": fido2_options_to_dict(options), "challengeId": challenge_id}
 
 async def verify_authentication(challenge_id: str, auth_response: dict):
     state = challenges.pop(challenge_id, None)

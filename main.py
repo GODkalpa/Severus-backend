@@ -78,7 +78,7 @@ def build_dashboard_snapshot() -> dict[str, list[dict]]:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=parse_allowed_origins(),
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
