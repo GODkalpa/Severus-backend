@@ -14,6 +14,8 @@ from fido2.webauthn import (
     PublicKeyCredentialRpEntity,
     PublicKeyCredentialDescriptor,
     PublicKeyCredentialType,
+    AuthenticatorSelectionCriteria,
+    ResidentKeyRequirement,
 )
 from fido2.utils import websafe_decode, websafe_encode
 from services.brain import supabase
@@ -93,8 +95,11 @@ async def generate_registration_options(user_id: str | None = None, master_secre
     options, state = get_fido_server().register_begin(
         user,
         credentials,
-        authenticator_attachment=AuthenticatorAttachment.PLATFORM,
-        user_verification=UserVerificationRequirement.REQUIRED,
+        authenticator_selection=AuthenticatorSelectionCriteria(
+            authenticator_attachment=AuthenticatorAttachment.PLATFORM,
+            user_verification=UserVerificationRequirement.REQUIRED,
+            resident_key=ResidentKeyRequirement.PREFERRED,
+        ),
     )
     
     challenge_id = str(uuid.uuid4())
