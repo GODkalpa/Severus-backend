@@ -797,8 +797,20 @@ async def check_due_reminders() -> list[dict]:
         
         due = []
         for r in all_active:
-            last = datetime.fromisoformat(r["last_reminded_at"])
-            interval = float(r["interval_hours"])
+            is_one_off = r.get("is_one_off", False)
+            if is_one_off:
+                due_at_str = r.get("due_at")
+                if due_at_str:
+                    due_at = datetime.fromisoformat(due_at_str.replace("Z", "+00:00"))
+                    if now >= due_at:
+                        due.append(r)
+                continue
+
+            lna = r.get("last_notified_at")
+            if not lna:
+                continue
+            last = datetime.fromisoformat(lna.replace("Z", "+00:00"))
+            interval = float(r.get("interval_hours", 2.0))
             if (now - last) >= timedelta(hours=interval):
                 due.append(r)
         

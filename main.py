@@ -27,7 +27,22 @@ from services.push_service import save_subscription
 from worker import run_context_engine
 import json
 
-app = FastAPI(title="Severus Voice AI Backend")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Handle application lifecycle events.
+    """
+    print("🚀 [REVELIO] Launching 24/7 Context Engine...")
+    task = asyncio.create_task(run_context_engine())
+    yield
+    # Shutdown logic
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        print("🛑 Context Engine stopped.")
+
+app = FastAPI(title="Severus Voice AI Backend", lifespan=lifespan)
 
 
 def parse_allowed_origins() -> list[str]:
