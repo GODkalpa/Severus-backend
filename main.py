@@ -228,10 +228,15 @@ async def websocket_endpoint(websocket: WebSocket):
         async def stream_sentence_audio(sentence: str):
             print(f"Aggregating TTS for sentence: {sentence}")
             try:
+                full_audio = b""
+                # AGGREGATE: Collect all chunks for one sentence into a single block
+                # to prevent MP3 fragmentation glitches in the mobile browser.
                 async for audio_chunk in generate_tts_stream(sentence):
-                    await websocket.send_bytes(audio_chunk)
+                    full_audio += audio_chunk
                 
-                print(f"Sent streaming audio chunks for sentence.")
+                if full_audio:
+                    await websocket.send_bytes(full_audio)
+                    print(f"Sent aggregated audio block ({len(full_audio)} bytes) for sentence.")
             except Exception as e:
                 print(f"Error in TTS generation: {e}")
 
@@ -245,14 +250,14 @@ async def websocket_endpoint(websocket: WebSocket):
                 parts = re.split(r'(?<=[.!?])\s+|\n', sentence_buffer)
                 
                 if len(parts) > 1:
-                    # Logic to merge short 'intro' sentences for smoother audio flow
+                    # Optimized splitting for faster response start
                     temp_p = ""
                     for p in parts[:-1]:
                         if not p.strip(): continue
                         temp_p += (" " + p) if temp_p else p
                         
-                        # Only stream if the combined sentence is long enough or has enough weight
-                        if len(temp_p.split()) >= 4:
+                        # REDUCED: Stream as soon as we have 2 words to drop initial latency.
+                        if len(temp_p.split()) >= 2:
                             s_cleaned = clean_spoken_text(temp_p)
                             if s_cleaned:
                                 await stream_sentence_audio(s_cleaned)
