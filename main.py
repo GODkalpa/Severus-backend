@@ -1,8 +1,10 @@
 import os
 import asyncio
 import re
+import json
 from datetime import datetime, timezone
 from urllib.parse import urlparse
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -82,15 +84,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-@app.on_event("startup")
-async def startup_event():
-    """
-    Launch the 24/7 Context Engine (reminders) as a background task
-    when the server starts up.
-    """
-    print("🚀 [REVELIO] Launching 24/7 Context Engine...")
-    asyncio.create_task(run_context_engine())
 
 @app.get("/")
 async def root():
@@ -174,13 +167,22 @@ async def websocket_endpoint(websocket: WebSocket):
     
     # 0. Wait for authentication token
     try:
-        auth_msg = await websocket.receive_text()
+        # Use a timeout for initial auth to prevent hanging connections
+        auth_msg = await asyncio.wait_for(websocket.receive_text(), timeout=5.0)
         auth_data = json.loads(auth_msg)
         if auth_data.get("type") != "AUTH" or not await validate_session(auth_data.get("token")):
-            await websocket.send_text(json.dumps({"type": "ERROR", "message": "UNAUTHORIZED"}))
-            await websocket.close()
+            await websocket.send_text(json.dumps({
+                "type": "ERROR", 
+                "message": "UNAUTHORIZED",
+                "detail": "Invalid or expired session token."
+            }))
+            await websocket.close(code=4003)
             return
-    except Exception:
+    except asyncio.TimeoutError:
+        await websocket.close(code=4008) # Policy Violation / Timeout
+        return
+    except Exception as e:
+        print(f"Auth error: {e}")
         await websocket.close()
         return
 
@@ -267,17 +269,17 @@ async def websocket_endpoint(websocket: WebSocket):
         loop=loop
     )
     
+    # Start STT connection as a background task so we can start receiving data immediately
+    # This prevents the initial handshake from timing out on the client side.
+    stt_task = asyncio.create_task(asyncio.to_thread(stt_handler.connect))
+    
     try:
-        # Start the connection to AssemblyAI in a separate thread to avoid blocking the loop
-        print("Connecting to AssemblyAI...")
-        await asyncio.to_thread(stt_handler.connect)
-        print("AssemblyAI connected successfully")
-        
         while True:
             # Receive binary audio from the frontend
             data = await websocket.receive_bytes()
             
-            # Pipe to AssemblyAI (this is non-blocking as it just queues the data)
+            # Pipe to AssemblyAI (only if connected, otherwise queue or wait)
+            # stt_handler.stream_audio is non-blocking
             stt_handler.stream_audio(data)
             
     except WebSocketDisconnect:
@@ -286,6 +288,7 @@ async def websocket_endpoint(websocket: WebSocket):
         print(f"WebSocket error: {e}")
     finally:
         stt_handler.close()
+        stt_task.cancel()
         print("STT session closed on websocket exit")
 
 if __name__ == "__main__":

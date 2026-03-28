@@ -57,22 +57,40 @@ async def run_context_engine():
             now = datetime.now(timezone.utc)
 
             for reminder in reminders:
-                lna = reminder.get("last_notified_at") or reminder.get("lastNotifiedAt")
-                if not lna:
-                    continue
+                is_one_off = reminder.get("is_one_off", False)
+                reminder_text = reminder.get("reminder_text", "Timer Alert")
+                reminder_id = reminder.get("id")
                 
-                last_notified = datetime.fromisoformat(lna.replace("Z", "+00:00"))
-                interval_hours = reminder.get("interval_hours", 2)
+                should_notify = False
                 
-                # Check if it's time to notify
-                next_notification = last_notified + timedelta(hours=interval_hours)
-                
-                if now >= next_notification:
-                    print(f"🚨 ALERT: '{reminder['task']}' is due!")
+                if is_one_off:
+                    # Logic for one-off timers: check due_at
+                    due_at_str = reminder.get("due_at")
+                    if not due_at_str:
+                        continue
+                    due_at = datetime.fromisoformat(due_at_str.replace("Z", "+00:00"))
+                    if now >= due_at:
+                        should_notify = True
+                        print(f"🚨 TIMER EXPIRED: '{reminder_text}' was due at {due_at}")
+                else:
+                    # Logic for recurring reminders: check interval
+                    lna = reminder.get("last_notified_at") or reminder.get("lastNotifiedAt")
+                    if not lna:
+                        continue
+                    last_notified = datetime.fromisoformat(lna.replace("Z", "+00:00"))
+                    interval_hours = reminder.get("interval_hours", 2)
+                    next_notification = last_notified + timedelta(hours=interval_hours)
                     
+                    if now >= next_notification:
+                        should_notify = True
+                        print(f"🚨 RECURRING ALERT: '{reminder_text}' is due!")
+                    else:
+                        wait_minutes = (next_notification - now).total_seconds() / 60
+                        print(f"⏳ '{reminder_text}' check: Wait {wait_minutes:.1f} more mins.")
+
+                if should_notify:
                     # Notify every subscription
                     for sub in subscriptions:
-                        # Construct sub_info expected by pywebpush
                         sub_info = {
                             "endpoint": sub["endpoint"],
                             "keys": {
@@ -83,15 +101,18 @@ async def run_context_engine():
                         
                         send_push_notification(
                             subscription_info=sub_info,
-                            message=reminder["task"],
+                            message=reminder_text,
                             title="SEVERUS_ALERT"
                         )
                     
-                    # Update timestamp
-                    await update_reminder_time(reminder["id"])
-                else:
-                    wait_minutes = (next_notification - now).total_seconds() / 60
-                    print(f"⏳ '{reminder['task']}' check: Wait {wait_minutes:.1f} more mins.")
+                    # Update status
+                    if is_one_off:
+                        # Deactivate one-off timers
+                        supabase.table("reminders").update({"is_active": False, "last_notified_at": now.isoformat()}).eq("id", reminder_id).execute()
+                        print(f"✅ Timer {reminder_id} completed and deactivated.")
+                    else:
+                        # Update timestamp for recurring
+                        await update_reminder_time(reminder_id)
 
         except Exception as e:
             print(f"❌ Context engine error: {e}")

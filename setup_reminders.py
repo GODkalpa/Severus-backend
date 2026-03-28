@@ -6,8 +6,10 @@ async def setup_reminders_table():
     CREATE TABLE IF NOT EXISTS public.reminders (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         reminder_text TEXT NOT NULL,
-        interval_hours NUMERIC NOT NULL,
-        last_reminded_at TIMESTAMPTZ DEFAULT now(),
+        interval_hours NUMERIC DEFAULT 2.0,
+        last_notified_at TIMESTAMPTZ DEFAULT now(),
+        due_at TIMESTAMPTZ,
+        is_one_off BOOLEAN DEFAULT false,
         is_active BOOLEAN DEFAULT true,
         created_at TIMESTAMPTZ DEFAULT now()
     );
@@ -37,7 +39,7 @@ async def setup_reminders_table():
 
     # Seed the water reminder
     seed_sql = """
-    INSERT INTO public.reminders (reminder_text, interval_hours, last_reminded_at)
+    INSERT INTO public.reminders (reminder_text, interval_hours, last_notified_at)
     VALUES ('Drink some water', 2.0, now() - interval '2 hours')
     ON CONFLICT DO NOTHING;
     """

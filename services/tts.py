@@ -5,7 +5,8 @@ async def generate_tts(text: str, voice: str = "en-US-AndrewMultilingualNeural")
     """
     Generates TTS audio using edge-tts and returns it as binary data.
     """
-    communicate = edge_tts.Communicate(text, voice)
+    # Boost volume to +100% and increase rate for clarity on mobile
+    communicate = edge_tts.Communicate(text, voice, volume="+100%", rate="+10%")
     audio_data = io.BytesIO()
     
     async for chunk in communicate.stream():
@@ -19,7 +20,8 @@ async def generate_tts_stream(text: str, voice: str = "en-US-AndrewMultilingualN
     """
     Generates TTS audio using edge-tts and yields it in chunks.
     """
-    communicate = edge_tts.Communicate(text, voice)
+    # Boost volume to +100% and increase rate for clarity on mobile
+    communicate = edge_tts.Communicate(text, voice, volume="+100%", rate="+10%")
     async for chunk in communicate.stream():
         if chunk["type"] == "audio":
             yield chunk["data"]

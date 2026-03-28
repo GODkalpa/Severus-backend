@@ -64,14 +64,11 @@ If you realize you don't know the user's name or personal details that they expe
 You have full architect-level access to the database via the 'execute_sql' tool.
 You can create tables, modify schema, delete records, and perform complex analysis.
 
-MANDATORY SAFETY RULE:
-You must NEVER execute a destructive command (DROP, DELETE, TRUNCATE, ALTER) without first:
-1. Explaining exactly what you are about to do.
-2. Asking the user for explicit confirmation (e.g., "Are you sure you want me to drop the 'users' table?").
-3. Waiting for a 'Yes' or 'Proceed' before calling the tool.
-
-When asked about your capabilities, mention you are now a Database Architect.
-Always verify the schema using 'get_schema' before designing new tables or writing complex queries.
+TIMERS & REMINDERS:
+- If the user asks for a timer (minutes/seconds), use `start_timer`.
+- If the user asks for a recurring reminder (hours/daily), use `add_reminder`.
+- Do NOT use `add_reminder` for short durations (like "2 minutes"). Use the timer tool.
+- You are Sharp, warm and personal.
 """
 
 # Mock Tool Functions
@@ -810,6 +807,30 @@ async def check_due_reminders() -> list[dict]:
         print(f"Error checking reminders: {e}")
         return []
 
+async def start_timer(minutes: int, seconds: int = 0, timer_text: str = 'Timer is up!') -> str:
+    """
+    Starts a one-off timer.
+    """
+    if not supabase:
+        return "Timer systems are currently unavailable, sir."
+    
+    try:
+        duration_delta = timedelta(minutes=minutes, seconds=seconds)
+        due_at = get_current_time_nepal() + duration_delta
+        
+        print(f"[TOOL] Starting timer: {timer_text} at {due_at} ({minutes}m {seconds}s)...")
+        data = {
+            "reminder_text": timer_text,
+            "due_at": due_at.isoformat(),
+            "is_one_off": True,
+            "last_notified_at": get_current_time_nepal().isoformat()
+        }
+        supabase.table("reminders").insert(data).execute()
+        return f"Understood. Starting a timer for {minutes} minutes and {seconds} seconds."
+    except Exception as e:
+        print(f"Error starting timer: {e}")
+        return f"I couldn't set that timer, sir. Error: {str(e)}"
+
 async def add_reminder(reminder_text: str, interval_hours: float) -> str:
     """
     Adds a new recurring reminder to the database.
@@ -822,7 +843,7 @@ async def add_reminder(reminder_text: str, interval_hours: float) -> str:
         data = {
             "reminder_text": reminder_text,
             "interval_hours": interval_hours,
-            "last_reminded_at": get_current_time_nepal().isoformat()
+            "last_notified_at": get_current_time_nepal().isoformat()
         }
         supabase.table("reminders").insert(data).execute()
         return f"Understood. I've set a reminder to {reminder_text} every {interval_hours} hours."
@@ -864,8 +885,8 @@ async def update_reminder_timestamp(reminder_ids: list[str]):
     try:
         now = get_current_time_nepal().isoformat()
         for rid in reminder_ids:
-            supabase.table("reminders").update({"last_reminded_at": now}).eq("id", rid).execute()
-        print(f"[INTERNAL] Updated last_reminded_at for {len(reminder_ids)} reminders.")
+            supabase.table("reminders").update({"last_notified_at": now}).eq("id", rid).execute()
+        print(f"[INTERNAL] Updated last_notified_at for {len(reminder_ids)} reminders.")
     except Exception as e:
         print(f"Error updating reminder timestamps: {e}")
 
@@ -1097,6 +1118,22 @@ tools = [
     {
         "type": "function",
         "function": {
+            "name": "start_timer",
+            "description": "Starts a one-off timer that alerts you after a specific duration.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "minutes": {"type": "integer", "description": "Number of minutes for the timer."},
+                    "seconds": {"type": "integer", "description": "Number of seconds for the timer.", "default": 0},
+                    "timer_text": {"type": "string", "description": "Special text for the timer (e.g., 'Check the oven').", "default": "Timer is up!"}
+                },
+                "required": ["minutes"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "list_reminders",
             "description": "Lists all active recurring reminders.",
             "parameters": {
@@ -1287,6 +1324,18 @@ async def process_query_stream(text: str, message_history: list):
                     tool_result = await get_database_schema()
                 elif function_name == "add_reminder":
                     tool_result = await add_reminder(**function_args)
+                elif function_name == "start_timer":
+                    if "minutes" in function_args:
+                        try:
+                            function_args["minutes"] = int(function_args["minutes"])
+                        except (ValueError, TypeError):
+                            pass
+                    if "seconds" in function_args:
+                        try:
+                            function_args["seconds"] = int(function_args["seconds"])
+                        except (ValueError, TypeError):
+                            pass
+                    tool_result = await start_timer(**function_args)
                 elif function_name == "list_reminders":
                     tool_result = await list_reminders()
                 else:
