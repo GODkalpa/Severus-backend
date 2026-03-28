@@ -8,6 +8,9 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
+load_dotenv(".env.local")
+load_dotenv()
+
 from services.stt import RealTimeSTT
 from services.brain import process_query_stream, supabase, clean_spoken_text
 from services.tts import generate_tts_stream
@@ -21,9 +24,6 @@ from services.auth_service import (
 from services.push_service import save_subscription
 from worker import run_context_engine
 import json
-
-load_dotenv(".env.local")
-load_dotenv()
 
 app = FastAPI(title="Severus Voice AI Backend")
 
@@ -98,8 +98,21 @@ async def root():
 
 # --- AUTH ROUTES ---
 
+@app.post("/api/auth/register/begin")
+async def register_begin(payload: dict):
+    user_id = payload.get("user_id")
+    master_secret = payload.get("master_secret")
+    if not user_id:
+        raise HTTPException(status_code=400, detail="user_id is required")
+    try:
+        return await generate_registration_options(user_id, master_secret)
+    except Exception as e:
+        if str(e) == "MASTER_SECRET_REQUIRED":
+            raise HTTPException(status_code=401, detail="MASTER_SECRET_REQUIRED")
+        raise HTTPException(status_code=400, detail=str(e))
+
 @app.get("/api/auth/register/begin")
-async def register_begin(user_id: str, master_secret: str = None):
+async def register_begin_legacy(user_id: str, master_secret: str = None):
     try:
         return await generate_registration_options(user_id, master_secret)
     except Exception as e:

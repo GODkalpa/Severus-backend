@@ -6,25 +6,41 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 from fido2.server import Fido2Server
 from fido2.webauthn import (
+    AuthenticationResponse,
     UserVerificationRequirement,
     AuthenticatorAttachment,
+    AttestedCredentialData,
     PublicKeyCredentialRpEntity,
 )
 from fido2.utils import websafe_decode, websafe_encode
 from services.brain import supabase
 
-# WebAuthn Configuration
-RP_ID = os.getenv("WEBAUTHN_RP_ID", "localhost")
 RP_NAME = "SEVERUS_HUD"
-ORIGIN = os.getenv("WEBAUTHN_ORIGIN", "http://localhost:3000")
-
-RP = PublicKeyCredentialRpEntity(id=RP_ID, name=RP_NAME)
-server = Fido2Server(RP)
+DEFAULT_RP_ID = "localhost"
+DEFAULT_ORIGIN = "http://localhost:3000"
 
 # In-memory challenge store (Session based or DB based)
 # For simplicity, we'll store challenges in a small global dict for now, 
 # but in production, this should be in Redis or DB with an expiry.
 challenges = {}
+
+
+def get_webauthn_rp_id() -> str:
+    return os.getenv("WEBAUTHN_RP_ID", DEFAULT_RP_ID)
+
+
+def get_webauthn_origin() -> str:
+    return os.getenv("WEBAUTHN_ORIGIN", DEFAULT_ORIGIN).rstrip("/")
+
+
+def get_fido_server() -> Fido2Server:
+    rp = PublicKeyCredentialRpEntity(id=get_webauthn_rp_id(), name=RP_NAME)
+    expected_origin = get_webauthn_origin()
+
+    def verify_origin(origin: str) -> bool:
+        return origin.rstrip("/") == expected_origin
+
+    return Fido2Server(rp, verify_origin=verify_origin)
 
 def fido2_options_to_dict(options):
     """
@@ -62,7 +78,7 @@ async def generate_registration_options(user_id: str, master_secret: str = None)
     for row in reg_response.data:
         credentials.append(websafe_decode(row["credential_id"]))
 
-    options, state = server.register_begin(
+    options, state = get_fido_server().register_begin(
         user,
         credentials,
         authenticator_attachment=AuthenticatorAttachment.PLATFORM,
@@ -83,13 +99,14 @@ async def verify_registration(challenge_id: str, challenge_response: dict):
     if not state:
         raise Exception("CHALLENGE_EXPIRED")
 
-    auth_data = server.register_complete(state, challenge_response)
+    auth_data = get_fido_server().register_complete(state, challenge_response)
     
     # Store in Supabase
     credential_data = {
         "credential_id": websafe_encode(auth_data.credential_data.credential_id),
-        "public_key": websafe_encode(auth_data.credential_data.public_key),
-        "sign_count": auth_data.credential_data.counter,
+        # Persist the full credential data so it can be reconstructed for assertion verification.
+        "public_key": websafe_encode(bytes(auth_data.credential_data)),
+        "sign_count": auth_data.counter,
         "transports": challenge_response.get("response", {}).get("transports", [])
     }
     
@@ -105,7 +122,7 @@ async def generate_authentication_options():
     for row in reg_response.data:
         credentials.append(websafe_decode(row["credential_id"]))
 
-    options, state = server.authenticate_begin(credentials)
+    options, state = get_fido_server().authenticate_begin(credentials)
     
     challenge_id = str(uuid.uuid4())
     challenges[challenge_id] = state
@@ -126,26 +143,22 @@ async def verify_authentication(challenge_id: str, auth_response: dict):
     if not db_cred.data:
         raise Exception("CREDENTIAL_NOT_FOUND")
 
-    # fido2 expects the credential to be passed back for verification
-    # This is a bit complex with manual storage, usually you use a CredentialSource
-    # but we can verify manually or use a helper.
-    
-    # Verify the signature using the registered credential
-    from fido2.webauthn import AttestedCredentialData
-    
     credential = AttestedCredentialData(websafe_decode(db_cred.data["public_key"]))
-    # (AttestedCredentialData expects a public key, we use the stored one)
-    # Actually, authenticate_complete in 2.x is simpler if we have the CredentialSource
-    # We'll use the low-level verification if authenticate_complete is tricky without a full CredentialSource
-    
-    auth_data = server.authenticate_complete(
+
+    get_fido_server().authenticate_complete(
         state,
         [credential],
         auth_response
     )
+
+    assertion = AuthenticationResponse.from_dict(auth_response)
+    new_sign_count = assertion.response.authenticator_data.counter
     
     # Store the sign count update
-    supabase.table("auth_credentials").update({"sign_count": auth_data.counter}).eq("credential_id", cred_id_encoded).execute()
+    supabase.table("auth_credentials").update({
+        "sign_count": new_sign_count,
+        "last_used_at": datetime.now(timezone.utc).isoformat(),
+    }).eq("credential_id", cred_id_encoded).execute()
 
     # Create session
     session_token = base64.b64encode(os.urandom(32)).decode()
