@@ -7,10 +7,13 @@ from enum import Enum
 from fido2.server import Fido2Server
 from fido2.webauthn import (
     AuthenticationResponse,
+    RegistrationResponse,
     UserVerificationRequirement,
     AuthenticatorAttachment,
     AttestedCredentialData,
     PublicKeyCredentialRpEntity,
+    PublicKeyCredentialDescriptor,
+    PublicKeyCredentialType,
 )
 from fido2.utils import websafe_decode, websafe_encode
 from services.brain import supabase
@@ -76,7 +79,12 @@ async def generate_registration_options(user_id: str, master_secret: str = None)
     credentials = []
     reg_response = supabase.table("auth_credentials").select("credential_id").execute()
     for row in reg_response.data:
-        credentials.append(websafe_decode(row["credential_id"]))
+        credentials.append(
+            PublicKeyCredentialDescriptor(
+                type=PublicKeyCredentialType.PUBLIC_KEY,
+                id=websafe_decode(row["credential_id"]),
+            )
+        )
 
     options, state = get_fido_server().register_begin(
         user,
@@ -99,7 +107,7 @@ async def verify_registration(challenge_id: str, challenge_response: dict):
     if not state:
         raise Exception("CHALLENGE_EXPIRED")
 
-    auth_data = get_fido_server().register_complete(state, challenge_response)
+    auth_data = get_fido_server().register_complete(state, RegistrationResponse.from_dict(challenge_response))
     
     # Store in Supabase
     credential_data = {
@@ -120,7 +128,12 @@ async def generate_authentication_options():
 
     credentials = []
     for row in reg_response.data:
-        credentials.append(websafe_decode(row["credential_id"]))
+        credentials.append(
+            PublicKeyCredentialDescriptor(
+                type=PublicKeyCredentialType.PUBLIC_KEY,
+                id=websafe_decode(row["credential_id"]),
+            )
+        )
 
     options, state = get_fido_server().authenticate_begin(credentials)
     
@@ -144,11 +157,12 @@ async def verify_authentication(challenge_id: str, auth_response: dict):
         raise Exception("CREDENTIAL_NOT_FOUND")
 
     credential = AttestedCredentialData(websafe_decode(db_cred.data["public_key"]))
+    parsed_response = AuthenticationResponse.from_dict(auth_response)
 
     get_fido_server().authenticate_complete(
         state,
         [credential],
-        auth_response
+        parsed_response
     )
 
     assertion = AuthenticationResponse.from_dict(auth_response)
