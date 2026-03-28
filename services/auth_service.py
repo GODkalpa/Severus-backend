@@ -1,8 +1,9 @@
 import os
-import json
 import base64
 import uuid
+from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
+from enum import Enum
 from fido2.server import Fido2Server
 from fido2.webauthn import (
     UserVerificationRequirement,
@@ -30,16 +31,19 @@ def fido2_options_to_dict(options):
     Recursively converts FIDO2 options objects to JSON-serializable dicts.
     Handles bytes by encoding to websafe_base64.
     """
-    if hasattr(options, "to_dict"):
-        return options.to_dict()
-    
-    # Fallback to manual dictionary construction if needed
-    # (In fido2 2.1.1+, options are typically Mapping-like or have to_dict)
-    try:
-        return json.loads(json.dumps(options))
-    except (TypeError, ValueError):
-        # Handle cases where direct serialization fails
-        return json.loads(json.dumps(options, default=lambda x: websafe_encode(x) if isinstance(x, bytes) else str(x)))
+    if isinstance(options, bytes):
+        return websafe_encode(options)
+
+    if isinstance(options, Enum):
+        return options.value
+
+    if isinstance(options, Mapping):
+        return {key: fido2_options_to_dict(value) for key, value in dict(options).items()}
+
+    if isinstance(options, (list, tuple)):
+        return [fido2_options_to_dict(value) for value in options]
+
+    return options
 
 def get_master_secret():
     return os.getenv("SEVERUS_MASTER_SECRET")
