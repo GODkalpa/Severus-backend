@@ -241,26 +241,33 @@ async def websocket_endpoint(websocket: WebSocket):
             async for chunk in process_query_stream(transcript_text, message_history):
                 sentence_buffer += chunk
                 
-                # Check for sentence endpoints (simple regex for . ! ? or newline)
-                # Matches punctuation followed by whitespace or end of string
+                # Check for sentence endpoints (punctuation or newline)
                 parts = re.split(r'(?<=[.!?])\s+|\n', sentence_buffer)
                 
                 if len(parts) > 1:
-                    # All parts except the last one are guaranteed to be complete
-                    for sentence in parts[:-1]:
-                        s_cleaned = clean_spoken_text(sentence)
-                        if s_cleaned:
-                            await stream_sentence_audio(s_cleaned)
-                    sentence_buffer = parts[-1]
+                    # Logic to merge short 'intro' sentences for smoother audio flow
+                    temp_p = ""
+                    for p in parts[:-1]:
+                        if not p.strip(): continue
+                        temp_p += (" " + p) if temp_p else p
+                        
+                        # Only stream if the combined sentence is long enough or has enough weight
+                        if len(temp_p.split()) >= 4:
+                            s_cleaned = clean_spoken_text(temp_p)
+                            if s_cleaned:
+                                await stream_sentence_audio(s_cleaned)
+                            temp_p = ""
+                    
+                    # Remaining partial sentence stays in buffer for next join
+                    sentence_buffer = (temp_p + " " + parts[-1]) if temp_p else parts[-1]
             
-            # Final portion of the response
+            # Final portion of the response (everything left in buffer)
             s_final = clean_spoken_text(sentence_buffer)
             if s_final:
                 await stream_sentence_audio(s_final)
             
             # Signal the client that the current response sequence is complete
-            # This helps the frontend know when to resume recording
-            await websocket.send_text("EOS") # End Of Stream signal
+            await websocket.send_text("EOS") 
             print("Response sequence completed (EOS sent)")
             
         except Exception as e:
