@@ -67,13 +67,17 @@ def fido2_options_to_dict(options):
 def get_master_secret():
     return os.getenv("SEVERUS_MASTER_SECRET")
 
-async def generate_registration_options(user_id: str, master_secret: str = None):
-    # If no credentials exist yet, require master secret
-    existing = supabase.table("auth_credentials").select("id").limit(1).execute()
-    if not existing.data and master_secret != get_master_secret():
-        raise Exception("MASTER_SECRET_REQUIRED")
+async def generate_registration_options(user_id: str | None = None, master_secret: str | None = None):
+    # Registration always requires the master secret for security
+    if master_secret != get_master_secret():
+        raise Exception("MASTER_SECRET_INVALID_OR_REQUIRED")
 
-    user = {"id": websafe_decode(websafe_encode(user_id.encode())), "name": "SeverusOwner", "displayName": "Severus Owner"}
+    # Use a fixed ID for the owner so multiple devices share the same logical "user"
+    user = {
+        "id": b"severus-owner-fixed", 
+        "name": "SeverusOwner", 
+        "displayName": "Severus Owner"
+    }
     
     # Check if user already has registered credentials
     credentials = []
@@ -175,7 +179,7 @@ async def verify_authentication(challenge_id: str, auth_response: dict):
     }).eq("credential_id", cred_id_encoded).execute()
 
     # Create session
-    session_token = base64.b64encode(os.urandom(32)).decode()
+    session_token = base64.urlsafe_b64encode(os.urandom(32)).decode()
     expires_at = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
     
     supabase.table("auth_sessions").insert({
@@ -186,13 +190,16 @@ async def verify_authentication(challenge_id: str, auth_response: dict):
     
     return {"status": "success", "sessionToken": session_token}
 
-async def validate_session(token: str):
-    res = supabase.table("auth_sessions").select("*").eq("session_token", token).single().execute()
-    if not res.data:
+async def validate_session(token: str | None) -> bool:
+    if not token:
         return False
-    
+    # Use maybe_single() so 0-row results return None instead of raising PGRST116
+    res = supabase.table("auth_sessions").select("*").eq("session_token", token).maybe_single().execute()
+    if not res or not res.data:
+        return False
+
     expires = datetime.fromisoformat(res.data["expires_at"].replace("Z", "+00:00"))
     if expires < datetime.now(timezone.utc):
         return False
-        
+
     return True
