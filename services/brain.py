@@ -23,10 +23,17 @@ LLM_API_KEY = (
 LLM_BASE_URL = (
     os.getenv("LLM_BASE_URL")
     or os.getenv("COMETAPI_BASE_URL")
-    or os.getenv("OPENROUTER_BASE_URL")
+    or (os.getenv("OPENROUTER_BASE_URL") if not os.getenv("COMETAPI_KEY") else None)
     or "https://api.cometapi.com/v1"
 )
-MODEL = os.getenv("LLM_MODEL") or os.getenv("COMETAPI_MODEL") or os.getenv("OPENROUTER_MODEL") or "gemini-3.8-flash"
+
+# Prioritize CometAPI models (gemini-3.8-flash) so legacy OPENROUTER_MODEL does not leak
+is_comet = bool(os.getenv("COMETAPI_KEY") or "cometapi" in LLM_BASE_URL.lower())
+if is_comet:
+    MODEL = os.getenv("LLM_MODEL") or os.getenv("COMETAPI_MODEL") or "gemini-3.8-flash"
+else:
+    MODEL = os.getenv("LLM_MODEL") or os.getenv("OPENROUTER_MODEL") or "openai/gpt-4o"
+
 MAX_COMPLETION_TOKENS = int(os.getenv("LLM_MAX_TOKENS", os.getenv("OPENROUTER_MAX_TOKENS", "512")))
 
 client_headers = None
