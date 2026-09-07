@@ -185,6 +185,8 @@ async def websocket_endpoint(websocket: WebSocket):
         auth_msg = await asyncio.wait_for(websocket.receive_text(), timeout=5.0)
         auth_data = json.loads(auth_msg)
         if auth_data.get("type") != "AUTH" or not await validate_session(auth_data.get("token")):
+            token_preview = (auth_data.get("token") or "")[:8]
+            print(f"[WS] Unauthorized: token='{token_preview}...' rejected by database.")
             await websocket.send_text(json.dumps({
                 "type": "ERROR", 
                 "message": "UNAUTHORIZED",
