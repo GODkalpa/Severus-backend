@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from services.brain import store_core_memory, search_core_memory
+from services.tools.memory import store_core_memory, search_core_memory
 
 async def test_memory():
     print("--- Testing Core Memory Tools ---")

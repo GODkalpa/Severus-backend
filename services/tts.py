@@ -1,7 +1,7 @@
 import edge_tts
 import io
 
-async def generate_tts(text: str, voice: str = "en-US-AndrewMultilingualNeural") -> bytes:
+async def generate_tts(text: str, voice: str = "en-US-GuyNeural") -> bytes:
     """
     Generates TTS audio using edge-tts and returns it as binary data.
     """
@@ -16,7 +16,7 @@ async def generate_tts(text: str, voice: str = "en-US-AndrewMultilingualNeural")
     return audio_data.getvalue()
 
 
-async def generate_tts_stream(text: str, voice: str = "en-US-AndrewMultilingualNeural"):
+async def generate_tts_stream(text: str, voice: str = "en-US-GuyNeural"):
     """
     Generates TTS audio using edge-tts and yields it in chunks.
     """

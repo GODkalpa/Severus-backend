@@ -21,11 +21,11 @@ from services.auth_service import (
     verify_registration, 
     generate_authentication_options, 
     verify_authentication,
-    validate_session
+    validate_session,
+    MasterSecretRequiredError
 )
 from services.push_service import save_subscription
 from worker import run_context_engine
-import json
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -109,8 +109,10 @@ async def register_begin(payload: dict):
         raise HTTPException(status_code=400, detail="user_id is required")
     try:
         return await generate_registration_options(user_id, master_secret)
+    except MasterSecretRequiredError:
+        raise HTTPException(status_code=401, detail="MASTER_SECRET_REQUIRED")
     except Exception as e:
-        if str(e) == "MASTER_SECRET_REQUIRED":
+        if "MASTER_SECRET" in str(e):
             raise HTTPException(status_code=401, detail="MASTER_SECRET_REQUIRED")
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -118,8 +120,10 @@ async def register_begin(payload: dict):
 async def register_begin_legacy(user_id: str, master_secret: str = None):
     try:
         return await generate_registration_options(user_id, master_secret)
+    except MasterSecretRequiredError:
+        raise HTTPException(status_code=401, detail="MASTER_SECRET_REQUIRED")
     except Exception as e:
-        if str(e) == "MASTER_SECRET_REQUIRED":
+        if "MASTER_SECRET" in str(e):
             raise HTTPException(status_code=401, detail="MASTER_SECRET_REQUIRED")
         raise HTTPException(status_code=400, detail=str(e))
 

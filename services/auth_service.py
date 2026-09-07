@@ -17,15 +17,17 @@ from fido2.webauthn import (
     ResidentKeyRequirement,
 )
 from fido2.utils import websafe_decode, websafe_encode
-from services.brain import supabase
+from services.db import supabase
+
+class MasterSecretRequiredError(Exception):
+    """Raised when master secret is missing or invalid during enrollment."""
+    pass
 
 RP_NAME = "SEVERUS_HUD"
 DEFAULT_RP_ID = "localhost"
 DEFAULT_ORIGIN = "http://localhost:3000"
 
 # In-memory challenge store (Session based or DB based)
-# For simplicity, we'll store challenges in a small global dict for now, 
-# but in production, this should be in Redis or DB with an expiry.
 challenges = {}
 
 
@@ -70,8 +72,9 @@ def get_master_secret():
 
 async def generate_registration_options(user_id: str | None = None, master_secret: str | None = None):
     # Registration always requires the master secret for security
-    if master_secret != get_master_secret():
-        raise Exception("MASTER_SECRET_INVALID_OR_REQUIRED")
+    expected_secret = get_master_secret()
+    if not expected_secret or master_secret != expected_secret:
+        raise MasterSecretRequiredError("MASTER_SECRET_REQUIRED")
 
     # Use a fixed ID for the owner so multiple devices share the same logical "user"
     user = {

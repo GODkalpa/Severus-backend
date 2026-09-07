@@ -1,7 +1,7 @@
 import asyncio
 import time
 from datetime import datetime, timezone, timedelta
-from services.brain import supabase
+from services.db import supabase
 from services.push_service import send_push_notification
 
 async def log_worker(message: str):

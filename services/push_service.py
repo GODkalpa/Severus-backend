@@ -56,7 +56,7 @@ async def get_all_subscriptions():
     """
     Retrieves all active push subscriptions from Supabase.
     """
-    from services.brain import supabase
+    from services.db import supabase
     try:
         response = supabase.table("push_subscriptions").select("*").execute()
         return response.data
@@ -68,7 +68,7 @@ async def save_subscription(subscription: Dict[str, Any]):
     """
     Saves or updates a push subscription in the database.
     """
-    from services.brain import supabase
+    from services.db import supabase
     try:
         # P256DH and Auth are stored in keys object of Web Push subscription
         data = {
