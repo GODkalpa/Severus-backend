@@ -114,42 +114,56 @@ async def generate_registration_options(user_id: str | None = None, master_secre
 def _normalize_webauthn_payload(data: dict) -> dict:
     """
     Decodes base64url-encoded string fields sent by the browser into raw bytes
-    as required by the fido2 library dataclasses.
+    as required by the fido2 library dataclasses, and ensures compatibility across
+    fido2 v1.x (which looks for 'clientData') and v2.x (which looks for 'clientDataJSON').
     """
     d = dict(data)
-    for raw_key in ("rawId", "raw_id"):
-        if raw_key in d and isinstance(d[raw_key], str):
-            decoded_raw = websafe_decode(d[raw_key])
-            d[raw_key] = decoded_raw
-            # In fido2, if "id" is present it is validated against "rawId"
-            if "id" in d:
-                d["id"] = decoded_raw
+    raw_raw = d.get("rawId") or d.get("raw_id")
+    if raw_raw:
+        raw_bytes = websafe_decode(raw_raw) if isinstance(raw_raw, str) else raw_raw
+        d["rawId"] = raw_bytes
+        d["raw_id"] = raw_bytes
+        d["id"] = raw_bytes
 
     if "response" in d and isinstance(d["response"], dict):
         resp = dict(d["response"])
-        for byte_key in (
-            "attestationObject",
-            "attestation_object",
-            "clientDataJSON",
-            "client_data_json",
-            "authenticatorData",
-            "authenticator_data",
-            "signature",
-        ):
-            if byte_key in resp and isinstance(resp[byte_key], str):
-                resp[byte_key] = websafe_decode(resp[byte_key])
 
-        if "userHandle" in resp:
-            if isinstance(resp["userHandle"], str) and resp["userHandle"]:
-                resp["userHandle"] = websafe_decode(resp["userHandle"])
-            else:
-                resp["userHandle"] = None
+        # 1. client_data: map across all possible key aliases
+        client_data_raw = resp.get("clientDataJSON") or resp.get("clientData") or resp.get("client_data")
+        if client_data_raw:
+            c_bytes = websafe_decode(client_data_raw) if isinstance(client_data_raw, str) else client_data_raw
+            resp["clientDataJSON"] = c_bytes
+            resp["clientData"] = c_bytes
+            resp["client_data"] = c_bytes
 
-        if "user_handle" in resp:
-            if isinstance(resp["user_handle"], str) and resp["user_handle"]:
-                resp["user_handle"] = websafe_decode(resp["user_handle"])
-            else:
-                resp["user_handle"] = None
+        # 2. attestation_object: map across key aliases
+        att_raw = resp.get("attestationObject") or resp.get("attestation_object")
+        if att_raw:
+            att_bytes = websafe_decode(att_raw) if isinstance(att_raw, str) else att_raw
+            resp["attestationObject"] = att_bytes
+            resp["attestation_object"] = att_bytes
+
+        # 3. authenticator_data: map across key aliases
+        auth_raw = resp.get("authenticatorData") or resp.get("authenticator_data") or resp.get("authData")
+        if auth_raw:
+            auth_bytes = websafe_decode(auth_raw) if isinstance(auth_raw, str) else auth_raw
+            resp["authenticatorData"] = auth_bytes
+            resp["authenticator_data"] = auth_bytes
+            resp["authData"] = auth_bytes
+
+        # 4. signature
+        sig_raw = resp.get("signature")
+        if sig_raw:
+            resp["signature"] = websafe_decode(sig_raw) if isinstance(sig_raw, str) else sig_raw
+
+        # 5. user_handle
+        uh_raw = resp.get("userHandle") or resp.get("user_handle")
+        if uh_raw and isinstance(uh_raw, str):
+            resp["userHandle"] = websafe_decode(uh_raw)
+            resp["user_handle"] = resp["userHandle"]
+        else:
+            resp["userHandle"] = None
+            resp["user_handle"] = None
 
         d["response"] = resp
     return d
