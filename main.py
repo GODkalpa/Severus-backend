@@ -132,6 +132,8 @@ async def register_complete(challenge_id: str, response: dict):
     try:
         return await verify_registration(challenge_id, response)
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/api/auth/login/begin")
@@ -146,6 +148,8 @@ async def login_complete(challenge_id: str, response: dict):
     try:
         return await verify_authentication(challenge_id, response)
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=400, detail=str(e))
 
 # --- PROTECTED ROUTES ---

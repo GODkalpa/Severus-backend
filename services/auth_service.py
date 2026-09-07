@@ -111,12 +111,57 @@ async def generate_registration_options(user_id: str | None = None, master_secre
         "challengeId": challenge_id
     }
 
+def _normalize_webauthn_payload(data: dict) -> dict:
+    """
+    Decodes base64url-encoded string fields sent by the browser into raw bytes
+    as required by the fido2 library dataclasses.
+    """
+    d = dict(data)
+    for raw_key in ("rawId", "raw_id"):
+        if raw_key in d and isinstance(d[raw_key], str):
+            decoded_raw = websafe_decode(d[raw_key])
+            d[raw_key] = decoded_raw
+            # In fido2, if "id" is present it is validated against "rawId"
+            if "id" in d:
+                d["id"] = decoded_raw
+
+    if "response" in d and isinstance(d["response"], dict):
+        resp = dict(d["response"])
+        for byte_key in (
+            "attestationObject",
+            "attestation_object",
+            "clientDataJSON",
+            "client_data_json",
+            "authenticatorData",
+            "authenticator_data",
+            "signature",
+        ):
+            if byte_key in resp and isinstance(resp[byte_key], str):
+                resp[byte_key] = websafe_decode(resp[byte_key])
+
+        if "userHandle" in resp:
+            if isinstance(resp["userHandle"], str) and resp["userHandle"]:
+                resp["userHandle"] = websafe_decode(resp["userHandle"])
+            else:
+                resp["userHandle"] = None
+
+        if "user_handle" in resp:
+            if isinstance(resp["user_handle"], str) and resp["user_handle"]:
+                resp["user_handle"] = websafe_decode(resp["user_handle"])
+            else:
+                resp["user_handle"] = None
+
+        d["response"] = resp
+    return d
+
+
 async def verify_registration(challenge_id: str, challenge_response: dict):
     state = challenges.pop(challenge_id, None)
     if not state:
         raise Exception("CHALLENGE_EXPIRED")
 
-    auth_data = get_fido_server().register_complete(state, RegistrationResponse.from_dict(challenge_response))
+    normalized_response = _normalize_webauthn_payload(challenge_response)
+    auth_data = get_fido_server().register_complete(state, RegistrationResponse.from_dict(normalized_response))
     
     # Store in Supabase
     credential_data = {
@@ -129,6 +174,7 @@ async def verify_registration(challenge_id: str, challenge_response: dict):
     
     supabase.table("auth_credentials").insert(credential_data).execute()
     return {"status": "success"}
+
 
 async def generate_authentication_options():
     reg_response = supabase.table("auth_credentials").select("credential_id").execute()
@@ -154,6 +200,7 @@ async def generate_authentication_options():
         "challengeId": challenge_id
     }
 
+
 async def verify_authentication(challenge_id: str, auth_response: dict):
     state = challenges.pop(challenge_id, None)
     if not state:
@@ -166,7 +213,8 @@ async def verify_authentication(challenge_id: str, auth_response: dict):
         raise Exception("CREDENTIAL_NOT_FOUND")
 
     credential = AttestedCredentialData(websafe_decode(db_cred.data["public_key"]))
-    parsed_response = AuthenticationResponse.from_dict(auth_response)
+    normalized_response = _normalize_webauthn_payload(auth_response)
+    parsed_response = AuthenticationResponse.from_dict(normalized_response)
 
     get_fido_server().authenticate_complete(
         state,
@@ -174,8 +222,7 @@ async def verify_authentication(challenge_id: str, auth_response: dict):
         parsed_response
     )
 
-    assertion = AuthenticationResponse.from_dict(auth_response)
-    new_sign_count = assertion.response.authenticator_data.counter
+    new_sign_count = parsed_response.response.authenticator_data.counter
     
     # Store the sign count update
     supabase.table("auth_credentials").update({
