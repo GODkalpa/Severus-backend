@@ -10,8 +10,12 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
-load_dotenv(".env.local")
-load_dotenv()
+from pathlib import Path
+backend_dir = Path(__file__).resolve().parent
+load_dotenv(backend_dir / ".env.local", override=True)
+load_dotenv(backend_dir / ".env", override=True)
+load_dotenv(".env.local", override=True)
+load_dotenv(override=True)
 
 from services.stt import RealTimeSTT
 from services.brain import process_query_stream, supabase, clean_spoken_text
@@ -89,14 +93,18 @@ async def build_dashboard_snapshot() -> dict[str, list[dict]]:
     financial_task = asyncio.to_thread(
         lambda: supabase.table("financial_ledger").select("*").gte("logged_at", today).order("logged_at", desc=True).execute()
     )
+    reminders_task = asyncio.to_thread(
+        lambda: supabase.table("reminders").select("*").eq("is_active", True).order("created_at", desc=True).execute()
+    )
 
     # Run in parallel
-    results = await asyncio.gather(biometric_task, action_task, financial_task)
+    results = await asyncio.gather(biometric_task, action_task, financial_task, reminders_task)
 
     return {
         "biometrics": results[0].data or [],
         "action_items": results[1].data or [],
         "financial_ledger": results[2].data or [],
+        "reminders": results[3].data or [],
     }
 
 # CORS Middleware

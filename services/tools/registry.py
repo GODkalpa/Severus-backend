@@ -5,7 +5,7 @@ from services.tools.search import search_the_web
 from services.tools.tasks import add_task, get_pending_tasks, complete_task, delete_task
 from services.tools.financial import log_expense, get_expense_summary
 from services.tools.biometrics import log_biometric, log_calories, get_daily_biometrics
-from services.tools.reminders import add_reminder, start_timer, list_reminders
+from services.tools.reminders import schedule_reminder, add_reminder, start_timer, list_reminders
 from services.tools.memory import store_core_memory, search_core_memory
 
 TOOLS_SCHEMA = [
@@ -172,12 +172,29 @@ TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
-            "name": "start_timer",
-            "description": "Sets a one-off countdown timer that notifies when finished.",
+            "name": "schedule_reminder",
+            "description": "Sets a reminder or timer in the database. Supports countdown minutes ('in 10 minutes'), specific times ('at 5 PM', 'tomorrow 9 AM'), or recurring intervals ('every 2 hours').",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "minutes": {"type": "integer", "description": "Duration in minutes."},
+                    "reminder_text": {"type": "string", "description": "What to be reminded of."},
+                    "minutes": {"type": "integer", "description": "Minutes from now for countdown timers."},
+                    "due_time": {"type": "string", "description": "Clock time or date (e.g. '5:00 PM', '17:00', 'tomorrow at 9 am')."},
+                    "interval_hours": {"type": "number", "description": "Interval in hours for repeating/recurring reminders."}
+                },
+                "required": ["reminder_text"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "start_timer",
+            "description": "Sets a one-off countdown timer that alerts when elapsed.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "minutes": {"type": "integer", "description": "Duration in minutes.", "default": 5},
                     "seconds": {"type": "integer", "description": "Additional seconds.", "default": 0},
                     "timer_text": {"type": "string", "description": "Timer label or alert text.", "default": "Timer is up!"}
                 },
@@ -189,14 +206,16 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "add_reminder",
-            "description": "Adds a recurring reminder that fires every N hours.",
+            "description": "Adds a recurring or scheduled reminder.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "reminder_text": {"type": "string", "description": "What to be reminded of."},
-                    "interval_hours": {"type": "number", "description": "Interval between alerts in hours."}
+                    "interval_hours": {"type": "number", "description": "Interval between alerts in hours.", "default": 2.0},
+                    "minutes": {"type": "integer", "description": "Minutes from now if setting a quick timer."},
+                    "due_time": {"type": "string", "description": "Specific time string (e.g. '5 PM')."}
                 },
-                "required": ["reminder_text", "interval_hours"]
+                "required": ["reminder_text"]
             }
         }
     },
@@ -254,6 +273,8 @@ TOOL_DISPATCH_MAP: dict[str, Callable[..., Coroutine[Any, Any, str]]] = {
     "log_biometric": log_biometric,
     "log_calories": log_calories,
     "get_daily_biometrics": get_daily_biometrics,
+    "schedule_reminder": schedule_reminder,
+    "set_reminder": schedule_reminder,
     "start_timer": start_timer,
     "add_reminder": add_reminder,
     "list_reminders": list_reminders,
@@ -271,12 +292,15 @@ async def dispatch_tool(function_name: str, function_args: dict) -> str:
 
     try:
         # Cast parameters appropriately
-        if function_name == "start_timer":
-            if "minutes" in function_args:
-                try: function_args["minutes"] = int(function_args["minutes"])
+        if function_name in ("start_timer", "schedule_reminder", "set_reminder"):
+            if "minutes" in function_args and function_args["minutes"] is not None:
+                try: function_args["minutes"] = int(float(function_args["minutes"]))
                 except (ValueError, TypeError): pass
-            if "seconds" in function_args:
-                try: function_args["seconds"] = int(function_args["seconds"])
+            if "seconds" in function_args and function_args["seconds"] is not None:
+                try: function_args["seconds"] = int(float(function_args["seconds"]))
+                except (ValueError, TypeError): pass
+            if "interval_hours" in function_args and function_args["interval_hours"] is not None:
+                try: function_args["interval_hours"] = float(function_args["interval_hours"])
                 except (ValueError, TypeError): pass
         elif function_name == "log_expense" and "amount" in function_args:
             try: function_args["amount"] = float(function_args["amount"])
@@ -284,9 +308,13 @@ async def dispatch_tool(function_name: str, function_args: dict) -> str:
         elif function_name == "log_biometric" and "value" in function_args:
             try: function_args["value"] = float(function_args["value"])
             except (ValueError, TypeError): pass
-        elif function_name == "add_reminder" and "interval_hours" in function_args:
-            try: function_args["interval_hours"] = float(function_args["interval_hours"])
-            except (ValueError, TypeError): pass
+        elif function_name == "add_reminder":
+            if "interval_hours" in function_args and function_args["interval_hours"] is not None:
+                try: function_args["interval_hours"] = float(function_args["interval_hours"])
+                except (ValueError, TypeError): pass
+            if "minutes" in function_args and function_args["minutes"] is not None:
+                try: function_args["minutes"] = int(float(function_args["minutes"]))
+                except (ValueError, TypeError): pass
 
         return await func(**function_args)
     except Exception as exc:

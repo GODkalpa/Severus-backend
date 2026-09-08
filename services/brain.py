@@ -10,6 +10,10 @@ from services.text_cleaner import clean_spoken_text, split_stream_sentences
 from services.tools.registry import TOOLS_SCHEMA, dispatch_tool
 from services.tools.reminders import check_due_reminders, update_reminder_timestamp
 
+from pathlib import Path
+backend_dir = Path(__file__).resolve().parent.parent
+load_dotenv(backend_dir / ".env.local", override=True)
+load_dotenv(backend_dir / ".env", override=True)
 load_dotenv(".env.local", override=True)
 load_dotenv(override=True)
 
@@ -73,7 +77,7 @@ Action-first intelligence:
 - Tasks and agenda: use `add_task`, `get_pending_tasks`, `complete_task`, `delete_task`.
 - Personal facts & preferences: proactively search memory with `search_core_memory`, and save new facts with `store_core_memory`.
 - Health vitals & calories: use `log_biometric`, `log_calories`, `get_daily_biometrics`.
-- Timers & alerts: use `start_timer` for countdowns or `add_reminder` for recurring tasks.
+- Timers & alerts: use `schedule_reminder` for countdowns, specific time reminders (e.g. "at 5 PM"), and recurring alerts.
 """
 
 async def process_query(text: str, message_history: list) -> str:
@@ -200,6 +204,38 @@ async def process_query_stream(text: str, message_history: list):
 
         if due_reminders:
             await update_reminder_timestamp([r["id"] for r in due_reminders if "id" in r])
+
+        # Fast-Path optimization for transactional tools:
+        # Avoids an expensive 10-15s second LLM roundtrip for simple confirmations
+        FAST_PATH_TOOLS = {
+            "schedule_reminder",
+            "set_reminder",
+            "start_timer",
+            "add_reminder",
+            "add_task",
+            "complete_task",
+            "delete_task",
+            "log_expense",
+            "log_biometric",
+            "log_calories",
+            "store_core_memory",
+        }
+
+        is_pure_fast_path = (
+            tool_results
+            and all(tr["name"] in FAST_PATH_TOOLS for tr in tool_results)
+            and all(not tr["content"].startswith("Error") and not tr["content"].startswith("Could not") for tr in tool_results)
+        )
+
+        if is_pure_fast_path:
+            fast_spoken = " ".join(clean_spoken_text(tr["content"]) for tr in tool_results if tr["content"])
+            if fast_spoken:
+                yield fast_spoken
+                message_history.append({
+                    "role": "assistant",
+                    "content": fast_spoken,
+                })
+                return
 
         # Second-pass completion with tool results
         final_messages = [{"role": "system", "content": dynamic_prompt}] + message_history
