@@ -50,7 +50,20 @@ app = FastAPI(title="Severus Voice AI Backend", lifespan=lifespan)
 def parse_allowed_origins() -> list[str]:
     raw_origins = os.getenv("CORS_ALLOWED_ORIGINS", "")
     origins = [get_http_origin(origin.strip()) for origin in raw_origins.split(",") if origin.strip()]
-    return origins or ["*"]
+
+    # Auto-include WEBAUTHN_ORIGIN if configured
+    webauthn_origin = os.getenv("WEBAUTHN_ORIGIN")
+    if webauthn_origin:
+        origins.append(get_http_origin(webauthn_origin.strip()))
+
+    # Auto-include origins derived from WEBAUTHN_RP_ID
+    rp_id = os.getenv("WEBAUTHN_RP_ID")
+    if rp_id and rp_id != "localhost":
+        origins.append(f"https://{rp_id}")
+        origins.append(f"https://www.{rp_id}")
+
+    deduped = list(dict.fromkeys(origins))
+    return deduped or ["*"]
 
 
 def get_http_origin(value: str) -> str:

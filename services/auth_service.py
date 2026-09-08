@@ -40,11 +40,17 @@ def get_webauthn_origin() -> str:
 
 
 def get_fido_server() -> Fido2Server:
-    rp = PublicKeyCredentialRpEntity(id=get_webauthn_rp_id(), name=RP_NAME)
+    rp_id = get_webauthn_rp_id()
+    rp = PublicKeyCredentialRpEntity(id=rp_id, name=RP_NAME)
     expected_origin = get_webauthn_origin()
 
     def verify_origin(origin: str) -> bool:
-        return origin.rstrip("/") == expected_origin
+        clean = origin.rstrip("/")
+        if clean == expected_origin:
+            return True
+        if rp_id and clean in (f"https://{rp_id}", f"https://www.{rp_id}", f"http://{rp_id}"):
+            return True
+        return False
 
     return Fido2Server(rp, verify_origin=verify_origin)
 
