@@ -28,7 +28,7 @@ from services.auth_service import (
     validate_session,
     MasterSecretRequiredError
 )
-from services.push_service import save_subscription
+from services.push_service import save_subscription, broadcast_push_notification
 from worker import run_context_engine
 
 @asynccontextmanager
@@ -188,6 +188,25 @@ async def subscribe_push(subscription: dict, token: str = None):
         return {"status": "success", "message": "REVELIO_UPLINK_ESTABLISHED"}
     else:
         raise HTTPException(status_code=500, detail="VAULT_WRITE_ERROR")
+
+@app.post("/api/push/test")
+async def test_push(token: str = None):
+    """
+    Triggers an immediate tactical test push notification to all subscribed devices.
+    """
+    if not await validate_session(token):
+        raise HTTPException(status_code=401, detail="UNAUTHORIZED")
+
+    count = await broadcast_push_notification(
+        message="Tactical push uplink verified. Audio chime and background alert active.",
+        title="SEVERUS // SYSTEM TEST",
+        url="/"
+    )
+    return {
+        "status": "success",
+        "delivered_to_devices": count,
+        "message": f"Broadcast delivered to {count} active device(s)."
+    }
 
 @app.get("/api/dashboard")
 async def dashboard(token: str = None):
